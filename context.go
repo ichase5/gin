@@ -58,7 +58,8 @@ type Context struct {
 	index    int8
 	fullPath string
 
-	engine       *Engine
+	engine *Engine
+	// TODO: 作用是?
 	params       *Params
 	skippedNodes *[]skippedNode
 

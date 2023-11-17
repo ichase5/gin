@@ -207,7 +207,7 @@ func New() *Engine {
 	}
 	engine.RouterGroup.engine = engine
 	engine.pool.New = func() any {
-		return engine.allocateContext(engine.maxParams)
+		return engine.allocateContext()
 	}
 	return engine
 }
@@ -229,8 +229,8 @@ func (engine *Engine) Handler() http.Handler {
 	return h2c.NewHandler(engine, h2s)
 }
 
-func (engine *Engine) allocateContext(maxParams uint16) *Context {
-	v := make(Params, 0, maxParams)
+func (engine *Engine) allocateContext() *Context {
+	v := make(Params, 0, engine.maxParams)
 	skippedNodes := make([]skippedNode, 0, engine.maxSections)
 	return &Context{engine: engine, params: &v, skippedNodes: &skippedNodes}
 }
@@ -337,10 +337,12 @@ func (engine *Engine) addRoute(method, path string, handlers HandlersChain) {
 
 	// Update maxParams
 	if paramsCount := countParams(path); paramsCount > engine.maxParams {
+		// 通配符参数(:或者*)的个数
 		engine.maxParams = paramsCount
 	}
 
 	if sectionsCount := countSections(path); sectionsCount > engine.maxSections {
+		// url的段数, 即"/"分割的个数
 		engine.maxSections = sectionsCount
 	}
 }

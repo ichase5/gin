@@ -150,6 +150,7 @@ func (n *node) incrementChildPrio(pos int) int {
 // addRoute adds a node with the given handle to the path.
 // Not concurrency-safe!
 func (n *node) addRoute(path string, handlers HandlersChain) {
+	// 调用进来的时候，path已经包含了routerGroup的path作为前缀了。即path就是完整的full path
 	fullPath := path
 	n.priority++
 
