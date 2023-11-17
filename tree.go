@@ -109,14 +109,14 @@ type nodeType uint8
 const (
 	static nodeType = iota
 	root
-	param
-	catchAll
+	param    // 对于 path 包含冒号通配符的情况，nType 是 param 类型
+	catchAll // *通配符
 )
 
 type node struct {
 	path      string
 	indices   string
-	wildChild bool
+	wildChild bool // 其实就是说是否为通配类型，nType 为 param 或 catchAll 时为 true
 	nType     nodeType
 	priority  uint32
 	children  []*node // child nodes, at most 1 :param style node at the end of the array
@@ -160,7 +160,7 @@ func (n *node) addRoute(path string, handlers HandlersChain) {
 		return
 	}
 
-	parentFullPathIndex := 0
+	parentFullPathIndex := 0 // 就是为了line 194使用，很容易想明白
 
 walk:
 	for {
@@ -170,6 +170,9 @@ walk:
 		i := longestCommonPrefix(path, n.path)
 
 		// Split edge
+		/*比如node.path = abc,然后插入abd
+		abc就要裂开成ab和c
+		*/
 		if i < len(n.path) {
 			child := node{
 				path:      n.path[i:],
@@ -191,11 +194,15 @@ walk:
 			n.fullPath = fullPath[:parentFullPathIndex+i]
 		}
 
+		/*比如node.path = abc,然后插入abd。要插入的就是node.path = d
+		或者node.path = abc,然后插入def。要插入的就是node.path = def
+		*/
 		// Make new node a child of this node
 		if i < len(path) {
-			path = path[i:]
+			path = path[i:] // 要插入的new child的path
 			c := path[0]
 
+			// TODO: 分析这种特殊case
 			// '/' after param
 			if n.nType == param && c == '/' && len(n.children) == 1 {
 				parentFullPathIndex += len(n.path)
@@ -208,12 +215,13 @@ walk:
 			for i, max := 0, len(n.indices); i < max; i++ {
 				if c == n.indices[i] {
 					parentFullPathIndex += len(n.path)
-					i = n.incrementChildPrio(i)
+					i = n.incrementChildPrio(i) // 保证子节点按照priority排序
 					n = n.children[i]
 					continue walk
 				}
 			}
 
+			// 没有匹配上的子节点，需要插入new child
 			// Otherwise insert it
 			if c != ':' && c != '*' && n.nType != catchAll {
 				// []byte for proper unicode char conversion, see #65
@@ -224,7 +232,7 @@ walk:
 				n.addChild(child)
 				n.incrementChildPrio(len(n.indices) - 1)
 				n = child
-			} else if n.wildChild {
+			} else if n.wildChild { // TODO: 分析这种特殊情况
 				// inserting a wildcard node, need to check if it conflicts with the existing wildcard
 				n = n.children[len(n.children)-1]
 				n.priority++
@@ -251,14 +259,17 @@ walk:
 					"'")
 			}
 
-			n.insertChild(path, fullPath, handlers)
+			n.insertChild(path, fullPath, handlers) // insert child的意思其实不是insert child...
 			return
 		}
 
+		// 对应这种case: node.path = abc,插入path = ab
+		// abc裂开成了ab,然后新裂node(path = ab的)注册handler即可
 		// Otherwise add handle to current node
 		if n.handlers != nil {
 			panic("handlers are already registered for path '" + fullPath + "'")
 		}
+
 		n.handlers = handlers
 		n.fullPath = fullPath
 		return
@@ -290,6 +301,7 @@ func findWildcard(path string) (wildcard string, i int, valid bool) {
 	return "", -1, false
 }
 
+// TODO: 分析path中有通配符的情况
 func (n *node) insertChild(path string, fullPath string, handlers HandlersChain) {
 	for {
 		// Find prefix until first wildcard
@@ -305,9 +317,12 @@ func (n *node) insertChild(path string, fullPath string, handlers HandlersChain)
 		}
 
 		// check if the wildcard has a name
+		//必须是/:id 或者/*id 这种形式，不能是/: 或者/*这种形式
 		if len(wildcard) < 2 {
 			panic("wildcards must be named with a non-empty name in path '" + fullPath + "'")
 		}
+
+		// 下面对于“:”和“*”的处理不同，两个逻辑块
 
 		if wildcard[0] == ':' { // param
 			if i > 0 {
@@ -328,6 +343,7 @@ func (n *node) insertChild(path string, fullPath string, handlers HandlersChain)
 
 			// if the path doesn't end with the wildcard, then there
 			// will be another subpath starting with '/'
+			// TODO: 这个是怎么走？ /*name/abc 那么/abc部分怎么走？
 			if len(wildcard) < len(path) {
 				path = path[len(wildcard):]
 
@@ -346,10 +362,14 @@ func (n *node) insertChild(path string, fullPath string, handlers HandlersChain)
 		}
 
 		// catchAll
+		// /*id这种形式会走到下面的路径
+
+		// path不合法: /*id必须在url结尾，后面不能再有其他路径
 		if i+len(wildcard) != len(path) {
 			panic("catch-all routes are only allowed at the end of the path in path '" + fullPath + "'")
 		}
 
+		// "/path/test" 和 要插入的"/path/*name" 冲突
 		if len(n.path) > 0 && n.path[len(n.path)-1] == '/' {
 			pathSeg := strings.SplitN(n.children[0].path, "/", 2)[0]
 			panic("catch-all wildcard '" + path +
@@ -401,8 +421,8 @@ func (n *node) insertChild(path string, fullPath string, handlers HandlersChain)
 // nodeValue holds return values of (*Node).getValue method
 type nodeValue struct {
 	handlers HandlersChain
-	params   *Params
-	tsr      bool
+	params   *Params // wildcard params
+	tsr      bool    // 多一个/的路径存在，尝试redirect
 	fullPath string
 }
 

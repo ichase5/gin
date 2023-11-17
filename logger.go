@@ -10,8 +10,6 @@ import (
 	"net/http"
 	"os"
 	"time"
-
-	"github.com/mattn/go-isatty"
 )
 
 type consoleColorModeValue int
@@ -215,7 +213,7 @@ func LoggerWithConfig(conf LoggerConfig) HandlerFunc {
 
 	notlogged := conf.SkipPaths
 
-	isTerm := true
+	isTerm := true // 是否写到terminal
 
 	if w, ok := out.(*os.File); !ok || os.Getenv("TERM") == "dumb" ||
 		(!isatty.IsTerminal(w.Fd()) && !isatty.IsCygwinTerminal(w.Fd())) {
@@ -246,7 +244,7 @@ func LoggerWithConfig(conf LoggerConfig) HandlerFunc {
 			param := LogFormatterParams{
 				Request: c.Request,
 				isTerm:  isTerm,
-				Keys:    c.Keys,
+				Keys:    c.Keys, // gin.context中的kv pairs
 			}
 
 			// Stop timer

@@ -69,7 +69,7 @@ func WriteJSON(w http.ResponseWriter, obj any) error {
 	if err != nil {
 		return err
 	}
-	_, err = w.Write(jsonBytes)
+	_, err = w.Write(jsonBytes) // (type responseWriter struct).Write() 会先write header,再write data(json bytes)
 	return err
 }
 

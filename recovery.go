@@ -58,7 +58,7 @@ func CustomRecoveryWithWriter(out io.Writer, handle RecoveryFunc) HandlerFunc {
 			if err := recover(); err != nil {
 				// Check for a broken connection, as it is not really a
 				// condition that warrants a panic stack trace.
-				var brokenPipe bool
+				var brokenPipe bool // 接收方的缓冲区已满或连接已经关闭
 				if ne, ok := err.(*net.OpError); ok {
 					var se *os.SyscallError
 					if errors.As(ne, &se) {
@@ -70,7 +70,7 @@ func CustomRecoveryWithWriter(out io.Writer, handle RecoveryFunc) HandlerFunc {
 					}
 				}
 				if logger != nil {
-					stack := stack(3)
+					stack := stack(3) // 为什么是3？ skip 3刚好是调用RecoveryFunc的位置信息
 					httpRequest, _ := httputil.DumpRequest(c.Request, false)
 					headers := strings.Split(string(httpRequest), "\r\n")
 					for idx, header := range headers {
@@ -115,6 +115,7 @@ func stack(skip int) []byte {
 	var lines [][]byte
 	var lastFile string
 	for i := skip; ; i++ { // Skip the expected number of frames
+		// 程序计数器，文件，行号
 		pc, file, line, ok := runtime.Caller(i)
 		if !ok {
 			break

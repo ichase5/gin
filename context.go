@@ -50,8 +50,8 @@ const abortIndex int8 = math.MaxInt8 >> 1
 // manage the flow, validate the JSON of a request and render a JSON response for example.
 type Context struct {
 	writermem responseWriter
-	Request   *http.Request
-	Writer    ResponseWriter
+	Request   *http.Request  // 既然请求包在了gin.ctx里,那么从请求中获取参数的方法，也就由ctx封装提供了
+	Writer    ResponseWriter // 这个接口，比原生http.ResponseWriter接口多了几个方法，便于使用。其实就是上面的writermem
 
 	Params   Params
 	handlers HandlersChain
@@ -169,9 +169,10 @@ func (c *Context) FullPath() string {
 // It executes the pending handlers in the chain inside the calling handler.
 // See example in GitHub.
 func (c *Context) Next() {
-	c.index++
+	c.index++ // 初始值为-1
 	for c.index < int8(len(c.handlers)) {
 		c.handlers[c.index](c)
+		// 如果不是中间件，没有middleware的handler,就要走for循环。如果是中间件，中间件内自己调用(&gin.Context{}).Next()方法进入line171
 		c.index++
 	}
 }
@@ -186,6 +187,7 @@ func (c *Context) IsAborted() bool {
 // If the authorization fails (ex: the password does not match), call Abort to ensure the remaining handlers
 // for this request are not called.
 func (c *Context) Abort() {
+	// 将index设置为最大值，Next()就不会继续调用后面的其他handler了
 	c.index = abortIndex
 }
 
@@ -915,7 +917,7 @@ func (c *Context) Cookie(name string) (string, error) {
 
 // Render writes the response headers and calls render.Render to render data.
 func (c *Context) Render(code int, r render.Render) {
-	c.Status(code)
+	c.Status(code) //c.Writer.WriteHeader(code) 只是记录在了Writer的status字段中
 
 	if !bodyAllowedForStatus(code) {
 		r.WriteContentType(c.Writer)

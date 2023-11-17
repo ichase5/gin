@@ -14,6 +14,7 @@ func (queryBinding) Name() string {
 
 func (queryBinding) Bind(req *http.Request, obj any) error {
 	values := req.URL.Query()
+	// 有"form" tag的字段
 	if err := mapForm(obj, values); err != nil {
 		return err
 	}

@@ -218,6 +218,7 @@ func (group *RouterGroup) createStaticHandler(relativePath string, fs http.FileS
 	fileServer := http.StripPrefix(absolutePath, http.FileServer(fs))
 
 	return func(c *Context) {
+		// only file就是说，不能作为目录对待，只能作为文件对待
 		if _, noListing := fs.(*onlyFilesFS); noListing {
 			c.Writer.WriteHeader(http.StatusNotFound)
 		}
@@ -229,11 +230,12 @@ func (group *RouterGroup) createStaticHandler(relativePath string, fs http.FileS
 			c.Writer.WriteHeader(http.StatusNotFound)
 			c.handlers = group.engine.noRoute
 			// Reset index
-			c.index = -1
+			c.index = -1 // 这里是由于c.Next()方法的逻辑，转为由noRoutes处理
 			return
 		}
 		f.Close()
 
+		// 这里就是直接调用golang http server内置包了
 		fileServer.ServeHTTP(c.Writer, c.Request)
 	}
 }
@@ -252,8 +254,10 @@ func (group *RouterGroup) calculateAbsolutePath(relativePath string) string {
 }
 
 func (group *RouterGroup) returnObj() IRoutes {
+	// 为什么要对root group单独判断？engine和group实现的IRoutes接口中，唯一区别就是Use()方法。如果是engine.Use,会特殊处理engine.noRoute和engine.noMethod，将middleware包含在404和405逻辑中
 	if group.root {
 		return group.engine
 	}
+
 	return group
 }

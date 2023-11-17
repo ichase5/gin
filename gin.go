@@ -149,7 +149,7 @@ type Engine struct {
 	MaxMultipartMemory int64
 
 	// UseH2C enable h2c support.
-	UseH2C bool
+	UseH2C bool // http2.0,默认false
 
 	// ContextWithFallback enable fallback Context.Deadline(), Context.Done(), Context.Err() and Context.Value() when Context.Request.Context() is not nil.
 	ContextWithFallback bool
@@ -306,6 +306,7 @@ func (engine *Engine) NoMethod(handlers ...HandlerFunc) {
 // For example, this is the right place for a logger or error management middleware.
 func (engine *Engine) Use(middleware ...HandlerFunc) IRoutes {
 	engine.RouterGroup.Use(middleware...)
+	// 404 not found和405 no method的handlers，也要加上这些中间件逻辑
 	engine.rebuild404Handlers()
 	engine.rebuild405Handlers()
 	return engine
@@ -568,10 +569,11 @@ func (engine *Engine) RunListener(listener net.Listener) (err error) {
 
 // ServeHTTP conforms to the http.Handler interface.
 func (engine *Engine) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	// gin.Context是pool了的，如果异步传递ctx需要拷贝，否则可能会有问题
 	c := engine.pool.Get().(*Context)
 	c.writermem.reset(w)
 	c.Request = req
-	c.reset()
+	c.reset() // 使用前先清空
 
 	engine.handleHTTPRequest(c)
 
@@ -592,40 +594,45 @@ func (engine *Engine) HandleContext(c *Context) {
 func (engine *Engine) handleHTTPRequest(c *Context) {
 	httpMethod := c.Request.Method
 	rPath := c.Request.URL.Path
+
+	// 下面这几行没卵用，跳过即可
 	unescape := false
 	if engine.UseRawPath && len(c.Request.URL.RawPath) > 0 {
 		rPath = c.Request.URL.RawPath
 		unescape = engine.UnescapePathValues
 	}
-
 	if engine.RemoveExtraSlash {
 		rPath = cleanPath(rPath)
 	}
 
 	// Find root of the tree for the given HTTP method
-	t := engine.trees
+	t := engine.trees // 9种method,各自一个tree（注册路由的时候创建的method tree)
 	for i, tl := 0, len(t); i < tl; i++ {
 		if t[i].method != httpMethod {
 			continue
 		}
 		root := t[i].root
 		// Find route in tree
+		// params和skippedNodes都是空数组
 		value := root.getValue(rPath, c.params, c.skippedNodes, unescape)
 		if value.params != nil {
 			c.Params = *value.params
 		}
 		if value.handlers != nil {
+			// handlers记录在node中，取出来放到gin.context中供Next()使用
 			c.handlers = value.handlers
 			c.fullPath = value.fullPath
 			c.Next()
 			c.writermem.WriteHeaderNow()
 			return
 		}
+		// 没找到路由，给一次重定向的机会
 		if httpMethod != http.MethodConnect && rPath != "/" {
 			if value.tsr && engine.RedirectTrailingSlash {
 				redirectTrailingSlash(c)
 				return
 			}
+			// 忽略大小写去匹配
 			if engine.RedirectFixedPath && redirectFixedPath(c, root, engine.RedirectFixedPath) {
 				return
 			}
@@ -633,6 +640,8 @@ func (engine *Engine) handleHTTPRequest(c *Context) {
 		break
 	}
 
+	// 默认false
+	// 如果设置了HandleMethodNotAllowed，那么在找不到路由的时候，会返回405而不是404
 	if engine.HandleMethodNotAllowed {
 		for _, tree := range engine.trees {
 			if tree.method == httpMethod {
@@ -678,7 +687,7 @@ func redirectTrailingSlash(c *Context) {
 		p = prefix + "/" + req.URL.Path
 	}
 	req.URL.Path = p + "/"
-	if length := len(p); length > 1 && p[length-1] == '/' {
+	if length := len(p); length > 1 && p[length-1] == '/' { // 删除重复的/,最后面只留一个/
 		req.URL.Path = p[:length-1]
 	}
 	redirectRequest(c)
@@ -698,7 +707,7 @@ func redirectFixedPath(c *Context, root *node, trailingSlash bool) bool {
 
 func redirectRequest(c *Context) {
 	req := c.Request
-	rPath := req.URL.Path
+	rPath := req.URL.Path // 已经被修改为要重定向的地址了
 	rURL := req.URL.String()
 
 	code := http.StatusMovedPermanently // Permanent redirect, request with GET method
