@@ -162,6 +162,7 @@ func ForceConsoleColor() {
 }
 
 // ErrorLogger returns a HandlerFunc for any error type.
+// 中间件，打印出当前ctx中所有的某种类型的错误
 func ErrorLogger() HandlerFunc {
 	return ErrorLoggerT(ErrorTypeAny)
 }

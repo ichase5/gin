@@ -53,15 +53,18 @@ type Context struct {
 	Request   *http.Request  // 既然请求包在了gin.ctx里,那么从请求中获取参数的方法，也就由ctx封装提供了
 	Writer    ResponseWriter // 这个接口，比原生http.ResponseWriter接口多了几个方法，便于使用。其实就是上面的writermem
 
-	Params   Params
+	Params Params // wildcard params
+
+	// handlers和fullpath是执行的时候，从nodeValue中获取的
 	handlers HandlersChain
-	index    int8
-	fullPath string
+	fullPath string // 完整url路径
+
+	index int8 // 当前执行到的handlers的index，Next()方法使用
 
 	engine *Engine
-	// TODO: 作用是?
-	params       *Params
-	skippedNodes *[]skippedNode
+
+	params       *Params        // 新建context的时候就创建一块内存，在处理请求的时候，node.getValue()时设置值，并给到nodeValue.params,之后给到ctx.Params
+	skippedNodes *[]skippedNode // 新建context的时候就创建一块内存，在处理请求的时候，node.getValue()时, 记录跳过的node
 
 	// This mutex protects Keys map.
 	mu sync.RWMutex
@@ -70,10 +73,10 @@ type Context struct {
 	Keys map[string]any
 
 	// Errors is a list of errors attached to all the handlers/middlewares who used this context.
-	Errors errorMsgs
+	Errors errorMsgs // ctx下所有错误的记录，包括request解析错误等
 
 	// Accepted defines a list of manually accepted formats for content negotiation.
-	Accepted []string
+	Accepted []string // 不重要，忽略
 
 	// queryCache caches the query result from c.Request.URL.Query().
 	queryCache url.Values

@@ -89,7 +89,7 @@ type Engine struct {
 	// For example if /foo/ is requested but a route only exists for /foo, the
 	// client is redirected to /foo with http status code 301 for GET requests
 	// and 307 for all other request methods.
-	RedirectTrailingSlash bool
+	RedirectTrailingSlash bool // 默认为true
 
 	// RedirectFixedPath if enabled, the router tries to fix the current request path, if no
 	// handle is registered for it.
@@ -146,7 +146,7 @@ type Engine struct {
 
 	// MaxMultipartMemory value of 'maxMemory' param that is given to http.Request's ParseMultipartForm
 	// method call.
-	MaxMultipartMemory int64
+	MaxMultipartMemory int64 // post form在内存中的最大字节数，超出部分写入磁盘临时文件
 
 	// UseH2C enable h2c support.
 	UseH2C bool // http2.0,默认false
@@ -615,7 +615,7 @@ func (engine *Engine) handleHTTPRequest(c *Context) {
 		}
 		root := t[i].root
 		// Find route in tree
-		// params和skippedNodes都是空数组
+		// params和skippedNodes都是空数组(len为0,cap不为0)
 		value := root.getValue(rPath, c.params, c.skippedNodes, unescape)
 		if value.params != nil {
 			c.Params = *value.params
