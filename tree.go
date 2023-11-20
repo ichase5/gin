@@ -172,14 +172,15 @@ walk:
 
 		/*
 			就这么几种情况:
-			1 path = /abc, n.path = /xyz 或者n.path = /abd
-			2 path = /abc, n.path = /abc
-			3 path = /abcd, n.path = /abc
+			1 n.path = abc, path = xyz 或者path = abd
+			2 n.path = abc, path = abcde
+			3 n.path = abcd, path = abc
+   			4 n.path = abc, path = abc
 		*/
 
 		// Split node
-		/*比如node.path = abc,然后插入abd
-		abc就要裂开成ab和c(c是新插入的node,static类型)
+		/*
+  		情况1或者情况3都会走到这里:
 		*/
 		if i < len(n.path) {
 			// child会继承n的child nodes
@@ -203,8 +204,8 @@ walk:
 			n.fullPath = fullPath[:parentFullPathIndex+i]
 		}
 
-		/*比如node.path = abc,然后插入abd。要插入的就是node.path = d
-		或者node.path = abc,然后插入def。要插入的就是node.path = def
+		/*
+  		情况1或者情况2，都会走到这里
 		*/
 		// Make new node a child of this node
 		if i < len(path) {
@@ -275,9 +276,10 @@ walk:
 		}
 
 		// Otherwise add handle to current node
-		if n.handlers != nil { // TODO: 什么时候会出现？
+		if n.handlers != nil { // 情况4，重复注册了路由
 			panic("handlers are already registered for path '" + fullPath + "'")
 		}
+		// 情况3在这里结束
 		n.handlers = handlers
 		n.fullPath = fullPath
 		return
