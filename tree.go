@@ -118,7 +118,7 @@ type node struct {
 	indices   string
 	wildChild bool // 其实就是说是否为通配类型，nType 为 param 或 catchAll 时为 true
 	nType     nodeType
-	priority  uint32
+	priority  uint32  // 以node为根节点的子树中，注册过的路径个数
 	children  []*node // child nodes, at most 1 :param style node at the end of the array
 	handlers  HandlersChain
 	fullPath  string
@@ -150,31 +150,39 @@ func (n *node) incrementChildPrio(pos int) int {
 // addRoute adds a node with the given handle to the path.
 // Not concurrency-safe!
 func (n *node) addRoute(path string, handlers HandlersChain) {
-	// 调用进来的时候，path已经包含了routerGroup的path作为前缀了。即path就是完整的full path
+	// path已经包含了routerGroup的path作为前缀了，path就是完整的full path
 	fullPath := path
 	n.priority++
 
-	// Empty tree
+	// Empty tree（第一次在注册该method的路由）
 	if len(n.path) == 0 && len(n.children) == 0 {
 		n.insertChild(path, fullPath, handlers)
 		n.nType = root
 		return
 	}
 
-	parentFullPathIndex := 0 // 就是为了line 194使用，很容易想明白
+	parentFullPathIndex := 0 // 就是为了n.fullPath = fullPath[:parentFullPathIndex+i]使用。每经过一个child node就增加一次
 
 walk:
 	for {
 		// Find the longest common prefix.
 		// This also implies that the common prefix contains no ':' or '*'
 		// since the existing key can't contain those chars.
-		i := longestCommonPrefix(path, n.path)
+		i := longestCommonPrefix(path, n.path) // i是第一个不相同字符的位置
 
-		// Split edge
+		/*
+			就这么几种情况:
+			1 path = /abc, n.path = /xyz 或者n.path = /abd
+			2 path = /abc, n.path = /abc
+			3 path = /abcd, n.path = /abc
+		*/
+
+		// Split node
 		/*比如node.path = abc,然后插入abd
-		abc就要裂开成ab和c
+		abc就要裂开成ab和c(c是新插入的node,static类型)
 		*/
 		if i < len(n.path) {
+			// child会继承n的child nodes
 			child := node{
 				path:      n.path[i:],
 				wildChild: n.wildChild,
@@ -182,7 +190,7 @@ walk:
 				indices:   n.indices,
 				children:  n.children,
 				handlers:  n.handlers,
-				priority:  n.priority - 1,
+				priority:  n.priority - 1, // 分裂之前n本身的priority要减回去(line 155加上去的)
 				fullPath:  n.fullPath,
 			}
 
@@ -200,6 +208,7 @@ walk:
 		*/
 		// Make new node a child of this node
 		if i < len(path) {
+			// 超出去的部分
 			path = path[i:] // 要插入的new child的path
 			c := path[0]
 
@@ -215,6 +224,7 @@ walk:
 			// Check if a child with the next path byte exists
 			for i, max := 0, len(n.indices); i < max; i++ {
 				if c == n.indices[i] {
+					// 进入子节点了
 					parentFullPathIndex += len(n.path)
 					i = n.incrementChildPrio(i) // 保证子节点按照priority排序
 					n = n.children[i]
@@ -264,13 +274,10 @@ walk:
 			return
 		}
 
-		// 对应这种case: node.path = abc,插入path = ab
-		// abc裂开成了ab,然后新裂node(path = ab的)注册handler即可
 		// Otherwise add handle to current node
-		if n.handlers != nil {
+		if n.handlers != nil { // TODO: 什么时候会出现？
 			panic("handlers are already registered for path '" + fullPath + "'")
 		}
-
 		n.handlers = handlers
 		n.fullPath = fullPath
 		return
@@ -453,6 +460,7 @@ walk: // Outer loop for walking the tree
 			for i, c := range []byte(n.indices) {
 				if c == idxc {
 					//  strings.HasPrefix(n.children[len(n.children)-1].path, ":") == n.wildChild
+					// TODO: ??
 					if n.wildChild {
 						index := len(*skippedNodes)
 						*skippedNodes = (*skippedNodes)[:index+1]
@@ -460,6 +468,7 @@ walk: // Outer loop for walking the tree
 							path: prefix + path,
 							node: &node{
 								path:      n.path,
+								indices:   "",
 								wildChild: n.wildChild,
 								nType:     n.nType,
 								priority:  n.priority,
@@ -471,6 +480,7 @@ walk: // Outer loop for walking the tree
 						}
 					}
 
+					// 进入子节点
 					n = n.children[i]
 					continue walk
 				}
