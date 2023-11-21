@@ -164,10 +164,11 @@ type Engine struct {
 	noMethod         HandlersChain
 	pool             sync.Pool
 	trees            methodTrees
-	maxParams        uint16
-	maxSections      uint16
-	trustedProxies   []string
-	trustedCIDRs     []*net.IPNet
+	// 创建ctx时使用
+	maxParams      uint16
+	maxSections    uint16
+	trustedProxies []string
+	trustedCIDRs   []*net.IPNet
 }
 
 var _ IRouter = (*Engine)(nil)

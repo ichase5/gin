@@ -81,7 +81,7 @@ func longestCommonPrefix(a, b string) int {
 	return i
 }
 
-// addChild will add a child node, keeping wildcardChild at the end
+// 加到最后面，但是如果已经有wildcard子节点，要保持wild card子节点在最后面
 func (n *node) addChild(child *node) {
 	if n.wildChild && len(n.children) > 0 {
 		wildcardChild := n.children[len(n.children)-1]
@@ -116,7 +116,7 @@ const (
 type node struct {
 	path      string
 	indices   string
-	wildChild bool // 其实就是说是否为通配类型，nType 为 param 或 catchAll 时为 true
+	wildChild bool // 其实就是说是否有通配类型的子节点，即有子节点的nType为param 或 catchAll
 	nType     nodeType
 	priority  uint32  // 以node为根节点的子树中，注册过的路径个数
 	children  []*node // child nodes, at most 1 :param style node at the end of the array
@@ -125,6 +125,7 @@ type node struct {
 }
 
 // Increments priority of the given child and reorders if necessary
+// children要保持按照priority从大到小排序
 func (n *node) incrementChildPrio(pos int) int {
 	cs := n.children
 	cs[pos].priority++
@@ -138,7 +139,13 @@ func (n *node) incrementChildPrio(pos int) int {
 	}
 
 	// Build new index char string
+	// a   b   c   d   e
+	// 9   7   7   6   5
+	// 9   7   7   8   5
+	// a   d   b   c   e
+	//  new_pos   pos
 	if newPos != pos {
+		// 对应上图中的四个部分: a d bc e
 		n.indices = n.indices[:newPos] + // Unchanged prefix, might be empty
 			n.indices[pos:pos+1] + // The index char we move
 			n.indices[newPos:pos] + n.indices[pos+1:] // Rest without char at 'pos'
@@ -151,7 +158,7 @@ func (n *node) incrementChildPrio(pos int) int {
 // Not concurrency-safe!
 func (n *node) addRoute(path string, handlers HandlersChain) {
 	// path已经包含了routerGroup的path作为前缀了，path就是完整的full path
-	fullPath := path
+	fullPath := path // 单独拷贝，因为path后面会被修改
 	n.priority++
 
 	// Empty tree（第一次在注册该method的路由）
@@ -171,16 +178,16 @@ walk:
 		i := longestCommonPrefix(path, n.path) // i是第一个不相同字符的位置
 
 		/*
-			就这么几种情况:
-			1 n.path = abc, path = xyz 或者path = abd
-			2 n.path = abc, path = abcde
-			3 n.path = abcd, path = abc
-   			4 n.path = abc, path = abc
+						就这么几种情况:
+						1 n.path = abc, path = xyz 或者path = abd
+						2 n.path = abc, path = abcde
+						3 n.path = abcd, path = abc
+			   			4 n.path = abc, path = abc
 		*/
 
 		// Split node
 		/*
-  		情况1或者情况3都会走到这里:
+			情况1或者情况3都会走到这里:
 		*/
 		if i < len(n.path) {
 			// child会继承n的child nodes
@@ -205,7 +212,9 @@ walk:
 		}
 
 		/*
-  		情况1或者情况2，都会走到这里
+			情况1或者情况2，都会走到这里
+			1 n.path = abc, path = xyz 或者path = abd
+			2 n.path = abc, path = abcde
 		*/
 		// Make new node a child of this node
 		if i < len(path) {
@@ -213,8 +222,11 @@ walk:
 			path = path[i:] // 要插入的new child的path
 			c := path[0]
 
-			// TODO: 分析这种特殊case
 			// '/' after param
+			// 当前节点为参数节点并且只有一个子节点 && path以/开头, 那么我们应该递归到子节点
+			// 参数节点不做匹配，直接用子节点进行匹配
+			// 即 :id/abc, 然后插入 /xxx。也就是说，认为参数节点为空就匹配上了
+			// 如果子节点多于一个，就没法直接选择子节点了
 			if n.nType == param && c == '/' && len(n.children) == 1 {
 				parentFullPathIndex += len(n.path)
 				n = n.children[0]
@@ -234,8 +246,7 @@ walk:
 			}
 
 			// 没有匹配上的子节点，需要插入new child
-			// Otherwise insert it
-			if c != ':' && c != '*' && n.nType != catchAll {
+			if c != ':' && c != '*' && n.nType != catchAll { // TODO:?
 				// []byte for proper unicode char conversion, see #65
 				n.indices += bytesconv.BytesToString([]byte{c})
 				child := &node{
@@ -244,17 +255,22 @@ walk:
 				n.addChild(child)
 				n.incrementChildPrio(len(n.indices) - 1)
 				n = child
-			} else if n.wildChild { // TODO: 分析这种特殊情况
+
+				n.insertChild(path, fullPath, handlers) // insert child是insert child if needed
+				return
+			} else if n.wildChild { // TODO: 分析这种特殊情况 c=:或者c=*
 				// inserting a wildcard node, need to check if it conflicts with the existing wildcard
-				n = n.children[len(n.children)-1]
+				n = n.children[len(n.children)-1] // wildcard子节点一定是最后一个child node
 				n.priority++
 
 				// Check if the wildcard matches
 				if len(path) >= len(n.path) && n.path == path[:len(n.path)] &&
 					// Adding a child to a catchAll is not possible
+					// catch all已经是末尾了，后面不能有东西
 					n.nType != catchAll &&
 					// Check for longer wildcard, e.g. :name and :names
 					(len(n.path) >= len(path) || path[len(n.path)] == '/') {
+					// ":id"类型通配符
 					continue walk
 				}
 
@@ -270,16 +286,13 @@ walk:
 					"' in existing prefix '" + prefix +
 					"'")
 			}
-
-			n.insertChild(path, fullPath, handlers) // insert child的意思其实不是insert child...
-			return
 		}
 
-		// Otherwise add handle to current node
 		if n.handlers != nil { // 情况4，重复注册了路由
 			panic("handlers are already registered for path '" + fullPath + "'")
 		}
 		// 情况3在这里结束
+		// 3 n.path = abcd, path = abc
 		n.handlers = handlers
 		n.fullPath = fullPath
 		return
@@ -303,6 +316,7 @@ func findWildcard(path string) (wildcard string, i int, valid bool) {
 			case '/':
 				return path[start : start+1+end], start, valid
 			case ':', '*':
+				// 不能在"/"出现前再次出现:或者*
 				valid = false
 			}
 		}
@@ -311,14 +325,10 @@ func findWildcard(path string) (wildcard string, i int, valid bool) {
 	return "", -1, false
 }
 
-// TODO: 分析path中有通配符的情况
 func (n *node) insertChild(path string, fullPath string, handlers HandlersChain) {
 	for {
 		// Find prefix until first wildcard
 		wildcard, i, valid := findWildcard(path)
-		if i < 0 { // No wildcard found
-			break
-		}
 
 		// The wildcard name must only contain one ':' or '*' character
 		if !valid {
@@ -326,8 +336,12 @@ func (n *node) insertChild(path string, fullPath string, handlers HandlersChain)
 				wildcard + "' in path '" + fullPath + "'")
 		}
 
+		if i < 0 { // No wildcard found
+			break
+		}
+
 		// check if the wildcard has a name
-		//必须是/:id 或者/*id 这种形式，不能是/: 或者/*这种形式
+		//必须是/:id 或者/*id 这种形式，不能是/: 或者/*这种形式,也就是说,:或者*后面必须有名字
 		if len(wildcard) < 2 {
 			panic("wildcards must be named with a non-empty name in path '" + fullPath + "'")
 		}
@@ -335,15 +349,19 @@ func (n *node) insertChild(path string, fullPath string, handlers HandlersChain)
 		// 下面对于“:”和“*”的处理不同，两个逻辑块
 
 		if wildcard[0] == ':' { // param
+			// 有通配符，要拆成两部分（或者三个部分）
+			// 通配符前，通配符，通配符后
+
+			// 通配符前
 			if i > 0 {
 				// Insert prefix before the current wildcard
 				n.path = path[:i]
 				path = path[i:]
 			}
-
+			// 通配符部分要单独作为子节点
 			child := &node{
 				nType:    param,
-				path:     wildcard,
+				path:     wildcard, // 如":id"
 				fullPath: fullPath,
 			}
 			n.addChild(child)
@@ -353,14 +371,14 @@ func (n *node) insertChild(path string, fullPath string, handlers HandlersChain)
 
 			// if the path doesn't end with the wildcard, then there
 			// will be another subpath starting with '/'
-			// TODO: 这个是怎么走？ /*name/abc 那么/abc部分怎么走？
-			if len(wildcard) < len(path) {
+			if len(wildcard) < len(path) { // 后面还有
 				path = path[len(wildcard):]
 
 				child := &node{
 					priority: 1,
 					fullPath: fullPath,
 				}
+				// 此时n已经是通配符部分了
 				n.addChild(child)
 				n = child
 				continue
@@ -373,15 +391,19 @@ func (n *node) insertChild(path string, fullPath string, handlers HandlersChain)
 
 		// catchAll
 		// /*id这种形式会走到下面的路径
+		/*
+			catch all的*id后面不能再有东西了
+			catch all分为三个部分，前面，empty path(indices="/")，通配符部分
+		*/
 
 		// path不合法: /*id必须在url结尾，后面不能再有其他路径
 		if i+len(wildcard) != len(path) {
 			panic("catch-all routes are only allowed at the end of the path in path '" + fullPath + "'")
 		}
 
-		// "/path/test" 和 要插入的"/path/*name" 冲突
+		// "path/test" 和 要插入的"path/*name" 冲突。因为/path/test无法确定匹配哪个了
 		if len(n.path) > 0 && n.path[len(n.path)-1] == '/' {
-			pathSeg := strings.SplitN(n.children[0].path, "/", 2)[0]
+			pathSeg := strings.SplitN(n.children[0].path, "/", 2)[0] // 调用前保证n一定有child node
 			panic("catch-all wildcard '" + path +
 				"' in new path '" + fullPath +
 				"' conflicts with existing path segment '" + pathSeg +
@@ -392,11 +414,14 @@ func (n *node) insertChild(path string, fullPath string, handlers HandlersChain)
 		// currently fixed width 1 for '/'
 		i--
 		if path[i] != '/' {
+			// *前面必须有/
 			panic("no / before catch-all in path '" + fullPath + "'")
 		}
 
+		// 通配符前部分
 		n.path = path[:i]
 
+		// empty path部分
 		// First node: catchAll node with empty path
 		child := &node{
 			wildChild: true,
@@ -409,9 +434,9 @@ func (n *node) insertChild(path string, fullPath string, handlers HandlersChain)
 		n = child
 		n.priority++
 
-		// second node: node holding the variable
+		// 通配符部分
 		child = &node{
-			path:     path[i:],
+			path:     path[i:], // "/*name"
 			nType:    catchAll,
 			handlers: handlers,
 			priority: 1,
@@ -423,6 +448,9 @@ func (n *node) insertChild(path string, fullPath string, handlers HandlersChain)
 	}
 
 	// If no wildcard was found, simply insert the path and handle
+	/*
+		没有通配符的，很简单，不需要创建新的child node,直接在当前node上添加handler即可
+	*/
 	n.path = path
 	n.handlers = handlers
 	n.fullPath = fullPath
@@ -662,9 +690,11 @@ walk: // Outer loop for walking the tree
 			return
 		}
 
+		// 匹配不上，才会进入下面的逻辑
+
 		// Nothing found. We can recommend to redirect to the same URL with an
 		// extra trailing slash if a leaf exists for that path
-		value.tsr = path == "/" || // 为什么？
+		value.tsr = path == "/" || // TODO: 为什么path == "/"就可以tsr??
 			// path刚好是prefix + "/",且存在handler
 			(len(prefix) == len(path)+1 && prefix[len(path)] == '/' &&
 				path == prefix[:len(prefix)-1] && n.handlers != nil)
